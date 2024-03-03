@@ -60,7 +60,6 @@ struct timeval timeout;
 // other
 socklen_t *addrlen;
 
-
 // helper functions
 
 void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigned long long int sequence_num, char* result) {
@@ -197,12 +196,11 @@ void send_data(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long 
     packet_buffer[sequence_num % PACKET_BUFFER_SIZE] = packet;
 }
 
-void send_packets(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int start_sequence_num, unsigned long long int bytesToTransfer) {
+void send_packets(FILE* file, int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int start_sequence_num, unsigned long long int bytesToTransfer) {
     // split data and send
     int bytes_left = bytesToTransfer;
     unsigned long long int sequence_num = start_sequence_num;
     while (bytes_left >= MAX_PAYLOAD_SIZE) {
-
         char cur_payload[MAX_PAYLOAD_SIZE];
         memset(cur_payload, 0, MAX_PAYLOAD_SIZE);
         // assembly the packet and send
@@ -225,21 +223,18 @@ void send_packets(int socket_fd, struct sockaddr_in *dest_addr, unsigned long lo
 
         int bytesRead = fread(cur_payload, 1, bytes_left, file);
         send_data(socket_fd, dest_addr, sequence_num, cur_payload, bytesRead);
-
-        // FILE reach its end
-        if(bytesRead != bytes_left) {
-            last_sequence_num = sequence_num;
-        }
+        
+        last_sequence_num = sequence_num;
     }
 }
 
-void retransmit(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int sequence_num) {
+void retransmit(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int missing_sequence_num, unsigned long long int ) {
     char* packet = packet_buffer[sequence_num % PACKET_BUFFER_SIZE];
     int packet_length = MY_HEADER_SIZE + get_payload_length(packet);
 
     // use buffer to retransmit and also update info in the buffer.
     sendto(socket_fd, packet, packet_length, 0, (const struct sockaddr *)dest_addr, addrlen);
-    // store info in the buffer in case of retransmission needed
+    // update sending time
     free(packet_sending_time[sequence_num % PACKET_BUFFER_SIZE]);
     packet_sending_time[sequence_num % PACKET_BUFFER_SIZE] = get_cur_time(); 
 }
@@ -286,8 +281,8 @@ void finish(int socket_fd, struct sockaddr_in *dest_addr) {
     }
     confirm_conn_stage(receive_buffer, FIN);
 
-    unsigned long long int ack_sequence_num = get_sequence_num(receive_buffer);
-    int ack_payload_length = get_payload_length(receive_buffer);
+    ack_sequence_num = get_sequence_num(receive_buffer);
+    ack_payload_length = get_payload_length(receive_buffer);
     assert(cur_sequence_num == ack_sequence_num); // should be FIN 1
     assert(ack_payload_length == 0); // ACK should not have any payload
 
@@ -346,9 +341,10 @@ void rsend(char* hostname,
     int in_air_packets_number = 0;
     unsigned long long int cur_sequence_num = 0;
     unsigned long long int first_unACK_sequence_num = 0;
+    unsigned long long int remaining_bytes = bytesToTransfer;
 
     // send the first packet then we can start observing what's happened and adjust congestion states accordingly.
-    send_packets(socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * cwnd);
+    send_packets(file, socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * cwnd);
     cur_sequence_num++;
     in_air_packets_number++;
 
@@ -386,6 +382,7 @@ void rsend(char* hostname,
             timeout.tv_usec = (timeout.tv_usec * 2) % 1000000; // remainder
         } else {
             unsigned long long int ack_sequence_num = get_sequence_num(receive_buffer);
+            confirm_conn_stage(receive_buffer, SEND_ACK);
             if (ack_sequence_num == first_unACK_sequence_num) {
 
                 // finish detection
@@ -431,21 +428,32 @@ void rsend(char* hostname,
                     cwnd = slow_start_threshold > 1 ? slow_start_threshold : 1;
                     dup_ACK_num = 0;
 
-                    cur_sequence_num = first_unACK_sequence_num; // resend packets for the missing ACK
-                    retransmit(socket_fd,sockaddr_in, cur_sequence_num);
+                    retransmit(socket_fd,sockaddr_in, first_unACK_sequence_num, cur_sequence_num);
 
                     next_stage = FAST_RECOVERY;
                 }
                 // keep running and remain in the current stage if dunp_ACK haven't reach the threshold 
             }
         }
-
         // try sending until reach cwnd limits
-        if (in_air_packets_number < cwnd) {
-            // try sending packets;
-            send_packets(socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number));
-            cur_sequence_num += (cwnd - in_air_packets_number);
-            in_air_packets_number += (cwnd - in_air_packets_number);
+        if (in_air_packets_number < cwnd && remaining_bytes > 0) {
+            // try sending packets
+            if (remaining_bytes > MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number)) {
+                (file, socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number));
+                cur_sequence_num += (cwnd - in_air_packets_number);
+                in_air_packets_number += (cwnd - in_air_packets_number);
+                remaining_bytes -= MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number);
+            } else {
+                send_packets(file, socket_fd, sockaddr_in, cur_sequence_num, remaining_bytes);
+                int num_packets_send = remaining_bytes / MAX_PAYLOAD_SIZE;
+                if (remaining_bytes % MAX_PAYLOAD_SIZE != 0) {
+                    num_packets_send++;
+                }
+                cur_sequence_num += num_packets_send;
+                in_air_packets_number += num_packets_send;
+                remaining_bytes = 0;
+            }
+            
         }
     } 
 
