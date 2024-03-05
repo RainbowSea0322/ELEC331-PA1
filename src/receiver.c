@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
@@ -12,40 +13,41 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <limits.h>
+#include <assert.h>
 
 // Package size
-#define NUM_STAGE_BYTES 1;  // total of 6 stages
-#define NUM_LENGTH_BYTES 1; // max is 1460
-#define NUM_SQUENCE_BYTES 8; // long long int has 8 bytes length
-#define MY_HEADER_SIZE NUM_STAGE_BYTES + NUM_LENGTH_BYTES + NUM_SQUENCE_BYTES;
-#define MAX_PAYLOAD_SIZE 1460; // same as TCP
+#define NUM_STAGE_BYTES 1  // total of 6 stages
+#define NUM_LENGTH_BYTES 1 // max is 1460
+#define NUM_SEQUENCE_BYTES 8 // long long int has 8 bytes length
+#define MY_HEADER_SIZE NUM_STAGE_BYTES + NUM_LENGTH_BYTES + NUM_SEQUENCE_BYTES
+#define MAX_PAYLOAD_SIZE 1460 // same as TCP
 
 // Handshaking Protocal
 enum CONNECTION_STAGE {CON_SYN, CON_ACK, SEND_SYN, SEND_ACK, FIN, FIN_ACK};
 
 // store the packets
-#define PACKET_BUFFER_SIZE 100; // TBD
+#define PACKET_BUFFER_SIZE 100
 char* packet_buffer[PACKET_BUFFER_SIZE];
 bool received[PACKET_BUFFER_SIZE];
 bool written[PACKET_BUFFER_SIZE];
 
 // other
 struct sockaddr_in src_addr;
-socklen_t *addrlen;
+socklen_t addrlen;
 struct timeval timeout;
 
 void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigned long long int sequence_num, char* result) {
-    for (int i=NUM_STAGE_BYTES; i>0; i--) {
+    for (int i=NUM_STAGE_BYTES-1; i>=0; i--) {
         result[i] = conn_stage & 0xFF;
         conn_stage /= 0xFF;
     }
     
-    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i>NUM_STAGE_BYTES; i--) {
+    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES-1; i>=NUM_STAGE_BYTES; i--) {
         result[i] = payload_length & 0xFF;
         conn_stage /= 0xFF;
     }
 
-    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SQUENCE_BYTES; i>NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i--) {
+    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SEQUENCE_BYTES-1; i>=NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i--) {
         result[i] = sequence_num & 0xFF;
         conn_stage /= 0xFF;
     }
@@ -54,7 +56,7 @@ void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigne
 void confirm_conn_stage(char* packet, enum CONNECTION_STAGE expected_stage) {
     enum CONNECTION_STAGE packet_stage = -1; // false default value
 
-    for (int i = 0; i<NUM_STAGE_BYTES>; i++) {
+    for (int i = 0; i<NUM_STAGE_BYTES; i++) {
         packet_stage += packet[i];
         packet_stage *= 0xFF;
     }
@@ -65,7 +67,7 @@ void confirm_conn_stage(char* packet, enum CONNECTION_STAGE expected_stage) {
 enum CONNECTION_STAGE get_conn_stage(char* packet) {
     enum CONNECTION_STAGE packet_stage = -1; // false default value
 
-    for (int i = 0; i<NUM_STAGE_BYTES>; i++) {
+    for (int i = 0; i<NUM_STAGE_BYTES; i++) {
         packet_stage += packet[i];
         packet_stage *= 0xFF;
     }
@@ -76,7 +78,7 @@ enum CONNECTION_STAGE get_conn_stage(char* packet) {
 int get_payload_length(char* packet) {
     int payload_length = 0;
 
-    for (int i = NUM_STAGE_BYTES; i<NUM_STAGE_BYTES+NUM_LENGTH_BYTES>; i++) {
+    for (int i = NUM_STAGE_BYTES; i<NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i++) {
         payload_length += packet[i];
         payload_length *= 0xFF;
     }
@@ -87,7 +89,7 @@ int get_payload_length(char* packet) {
 unsigned long long int get_sequence_num(char* packet){
     unsigned long long int sequence_num = 0;
 
-    for (int i = NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i < NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SQUENCE_BYTES; i++) {
+    for (int i = NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i < NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SEQUENCE_BYTES; i++) {
         sequence_num += packet[i];
         sequence_num *= 0xFF;
     }
@@ -97,7 +99,7 @@ unsigned long long int get_sequence_num(char* packet){
 
 void init_buffers() {
     for (int i = 0; i < PACKET_BUFFER_SIZE; i++) {
-        memset(packet_buffer[i], 0, sizeof(char*));
+        packet_buffer[i] = NULL;
         received[i] = false;
         written[i] = false;
     }
@@ -114,7 +116,7 @@ void connection(int socket_fd) {
     memset(receive_buffer, 0, MY_HEADER_SIZE);
 
     // 1. get SYN and confirm info are correct
-    recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)&src_addr, addrlen) 
+    recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen);
     confirm_conn_stage(receive_buffer, CON_SYN);
 
     unsigned long long int syn_sequence_num = get_sequence_num(receive_buffer);
@@ -124,10 +126,10 @@ void connection(int socket_fd) {
 
     // 2. send CON_ACK
     create_header(CON_ACK, 0, 0, conn_ack_header); // CON_ACK in third way handshake
-    sendto(socket_fd, conn_ack_header, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen);
+    sendto(socket_fd, conn_ack_header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
 
     // 3. get CON_ACK and confirm info are correct
-    recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen) 
+    recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen);
     confirm_conn_stage(receive_buffer, CON_ACK);
 
     syn_sequence_num  = get_sequence_num(receive_buffer);
@@ -139,8 +141,6 @@ void connection(int socket_fd) {
 }
 
 void recv_data(FILE* file, int socket_fd) {
-    unsigned long long int last_ack_num = -1; // next one should be 0
-
     char header[MY_HEADER_SIZE];
     memset(header, 0, MY_HEADER_SIZE);
 
@@ -150,13 +150,13 @@ void recv_data(FILE* file, int socket_fd) {
     // disable timeout
     timeout.tv_sec = 0;
     timeout.tv_usec = 0;
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     init_buffers();
 
     unsigned long long int next_sequence_num = 0;
 
-    while (recvfrom(sockfd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen) >= 0) {
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen) >= 0) {
         unsigned long long int sequence_num = get_sequence_num(receive_buffer);
         int payload_length = get_payload_length(receive_buffer);
         enum CONNECTION_STAGE stage = get_conn_stage(receive_buffer);
@@ -198,7 +198,7 @@ void recv_data(FILE* file, int socket_fd) {
         
         // send back ack
         create_header(SEND_ACK, 0, next_sequence_num-1, header);
-        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen);
+        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
     }
 }
 
@@ -214,17 +214,17 @@ void finish(int socket_fd) {
 
      // 1. send FIN ACK, finish request is handled in recv_data()
     create_header(FIN_ACK, 0, 0, header);
-    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen);
+    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
 
     // 2. send FIN to server
     create_header(FIN, 0, 1, header);
-    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen);
+    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
 
     // 3. get FIN ACK and confirm info are correct
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));  // set timeout
-    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)&src_addr, addrlen) == -1) {
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));  // set timeout
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen) == -1) {
         // resend on timeout
-        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)&src_addr, addrlen);
+        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
     }
     confirm_conn_stage(receive_buffer, FIN_ACK);
 
@@ -255,7 +255,7 @@ void rrecv(unsigned short int myUDPport,
     client_addr.sin_family = AF_INET;
     client_addr.sin_addr.s_addr = INADDR_ANY;
     client_addr.sin_port = htons(myUDPport);
-    if (bind(socket_fd, (const struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
+    if (bind(socket_fd, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
         perror("Binding failed");
         exit(EXIT_FAILURE);
     }
@@ -272,7 +272,7 @@ void rrecv(unsigned short int myUDPport,
 
     printf("[receiver] Receiving data.\n");
     
-    recv_data(socket_fd);
+    recv_data(file, socket_fd);
 
     printf("[receiver] Finish Receiving data.\n");
 
@@ -298,8 +298,8 @@ int main(int argc, char** argv) {
     }
 
     udpPort = (unsigned short int) atoi(argv[1]);
-    filename = argv[2];
-    writeRate = 0;
+    char* filename = argv[2];
+    unsigned long long int writeRate = 0;
 
-    rrecv(myUBPport, filename, writeRate);
+    rrecv(udpPort, filename, writeRate);
 }

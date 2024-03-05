@@ -47,6 +47,7 @@ enum CONGESTION_STAGE {SLOW_START, CONGESTION_AVOIDANCE, FAST_RECOVERY, RECV_ACK
 int cwnd = 1;
 int slow_start_threshold = INT_MAX; // wait for the first failure and set to half of cwnd
 int dup_ACK_num = 0;
+int success_packets_counter = 0;
 #define DUP_ACK_THRESHOLD 3
 
 bool finish_sending = false; // indicate start of finish stage
@@ -54,35 +55,30 @@ unsigned long long int last_sequence_num = -1;
 bool get_all_ACKs = false;
 
 // retransmission
-#define PACKET_BUFFER_SIZE 100 // TBD
+#define PACKET_BUFFER_SIZE 100
 char* packet_buffer[PACKET_BUFFER_SIZE];
 struct timeval* packet_sending_time[PACKET_BUFFER_SIZE];  // 1 to 1 match with packet_buffer
 struct timeval timeout;
 
 // other
-socklen_t *addrlen;
+socklen_t addrlen;
 
 // helper functions
 
 void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigned long long int sequence_num, char* result) {
-    // Assuming NUM_STAGE_BYTES, NUM_LENGTH_BYTES, and NUM_SEQUENCE_BYTES are defined correctly
-    int offset = 0;
-
-    // Connection Stage
-    for (int i = NUM_STAGE_BYTES - 1; i >= 0; i--) {
-        result[offset + i] = (char)((conn_stage >> (8 * i)) & 0xFF);
+    for (int i=NUM_STAGE_BYTES-1; i>=0; i--) {
+        result[i] = conn_stage & 0xFF;
+        conn_stage /= 0xFF;
     }
-    offset += NUM_STAGE_BYTES;
-
-    // Payload Length
-    for (int i = NUM_LENGTH_BYTES - 1; i >= 0; i--) {
-        result[offset + i] = (char)((payload_length >> (8 * (NUM_LENGTH_BYTES - 1 - i))) & 0xFF);
+    
+    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES-1; i>=NUM_STAGE_BYTES; i--) {
+        result[i] = payload_length & 0xFF;
+        conn_stage /= 0xFF;
     }
-    offset += NUM_LENGTH_BYTES;
 
-    // Sequence Number
-    for (int i = NUM_SEQUENCE_BYTES - 1; i >= 0; i--) {
-        result[offset + i] = (char)((sequence_num >> (8 * (NUM_SEQUENCE_BYTES - 1 - i))) & 0xFF);
+    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SEQUENCE_BYTES-1; i>=NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i--) {
+        result[i] = sequence_num & 0xFF;
+        conn_stage /= 0xFF;
     }
 }
 
@@ -94,8 +90,9 @@ void create_packet(char* header, char* payload, int payload_length, char* result
 void confirm_conn_stage(char* packet, enum CONNECTION_STAGE expected_stage) {
     enum CONNECTION_STAGE packet_stage = -1; // false default value
 
-  for (int i = 0; i < NUM_STAGE_BYTES; i++) {
-        packet_stage |= (unsigned char)packet[i] << (8 * (NUM_STAGE_BYTES - 1 - i));
+    for (int i = 0; i<NUM_STAGE_BYTES; i++) {
+        packet_stage += packet[i];
+        packet_stage *= 0xFF;
     }
 
     assert(packet_stage == expected_stage);
@@ -104,7 +101,7 @@ void confirm_conn_stage(char* packet, enum CONNECTION_STAGE expected_stage) {
 int get_payload_length(char* packet) {
     int payload_length = 0;
 
-    for (int i = NUM_STAGE_BYTES; i<NUM_STAGE_BYTES+NUM_LENGTH_BYTES>; i++) {
+    for (int i = NUM_STAGE_BYTES; i<NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i++) {
         payload_length += packet[i];
         payload_length *= 0xFF;
     }
@@ -126,9 +123,9 @@ unsigned long long int get_sequence_num(char* packet){
 // from:https://www.educative.io/answers/how-to-compute-devrtt-estimated-rtt-time-out-interval-in-ccn
 void update_timeout(int new_RTT){
     int est_RTT = new_RTT; // in milli seconds
-    int dev_RTT; // in milli seconds
+    int dev_RTT = 0; // in milli seconds
     int temp_timeout;
-    double alpah = 0.125;
+    double alpha = 0.125;
     double beta = 0.25;
 
     est_RTT = (1-alpha) * est_RTT + alpha * new_RTT;
@@ -157,18 +154,18 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
     setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));  // set timeout
 
     create_header(CON_SYN, 0, cur_sequence_num, conn_syn_header);
-    sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
     gettimeofday(&tval_before, NULL);
 
     // 2. get ACK and confirm info are correct
-    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)dest_addr, addrlen) == -1) {
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, &addrlen) == -1) {
         // resend on timeout
-        sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+        sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
         gettimeofday(&tval_before, NULL);
     }
     gettimeofday(&tval_after, NULL);
     timersub(&tval_after, &tval_before, &tval_result);
-    int new_RTT = transfer_microseconds_from_timeval(&tval_result);
+    int new_RTT = transfer_milliseconds_from_timeval(&tval_result);
     update_timeout(new_RTT);
 
     confirm_conn_stage(receive_buffer, CON_ACK);
@@ -181,7 +178,7 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
     // 2. send conn_syn and complete connection stage
     cur_sequence_num++;
     create_header(CON_ACK, 0, cur_sequence_num, conn_syn_header); // CON_ACK in third way handshake
-    sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
 
     printf("[sender] Connection stage complete!\n");
 }
@@ -191,12 +188,12 @@ void send_data(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long 
 
     char header[MY_HEADER_SIZE];
     memset(header, 0, MY_HEADER_SIZE);
-    char packet[packet_length] = malloc(sizeof(char) * packet_length); // clean up after use
+    char* packet = malloc(sizeof(char) * packet_length); // clean up after use
     memset(packet, 0, packet_length);
 
     create_header(SEND_SYN, payload_length, sequence_num, header);
     create_packet(header, payload, payload_length, packet);
-    sendto(socket_fd, packet, packet_length, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, packet, packet_length, 0, (struct sockaddr *)dest_addr, addrlen);
     // store info in the buffer in case of retransmission needed
     packet_sending_time[sequence_num % PACKET_BUFFER_SIZE] = get_cur_time(); 
     packet_buffer[sequence_num % PACKET_BUFFER_SIZE] = packet;
@@ -234,12 +231,12 @@ void send_packets(FILE* file, int socket_fd, struct sockaddr_in *dest_addr, unsi
     }
 }
 
-void retransmit(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int missing_sequence_num, unsigned long long int ) {
+void retransmit(int socket_fd, struct sockaddr_in *dest_addr, unsigned long long int sequence_num) {
     char* packet = packet_buffer[sequence_num % PACKET_BUFFER_SIZE];
     int packet_length = MY_HEADER_SIZE + get_payload_length(packet);
 
     // use buffer to retransmit and also update info in the buffer.
-    sendto(socket_fd, packet, packet_length, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, packet, packet_length, 0, (struct sockaddr *)dest_addr, addrlen);
     // update sending time
     free(packet_sending_time[sequence_num % PACKET_BUFFER_SIZE]);
     packet_sending_time[sequence_num % PACKET_BUFFER_SIZE] = get_cur_time(); 
@@ -259,12 +256,12 @@ void finish(int socket_fd, struct sockaddr_in *dest_addr) {
     memset(receive_buffer, 0, MY_HEADER_SIZE);
 
     create_header(FIN, 0, cur_sequence_num, header);
-    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
 
     // 2. get FIN ACK and confirm info are correct
-    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)dest_addr, addrlen) == -1) {
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, &addrlen) == -1) {
         // resend on timeout
-        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
     }
     confirm_conn_stage(receive_buffer, FIN_ACK);
 
@@ -278,12 +275,12 @@ void finish(int socket_fd, struct sockaddr_in *dest_addr) {
     // diable timeout
     timeout.tv_sec = 0;
     timeout.tv_usec = 0;   
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     // 3. wait for FIN from reveiver
-    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)dest_addr, addrlen) == -1) {
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, &addrlen) == -1) {
         // resend on timeout
-        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+        sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
     }
     confirm_conn_stage(receive_buffer, FIN);
 
@@ -294,7 +291,7 @@ void finish(int socket_fd, struct sockaddr_in *dest_addr) {
 
     // 4. send last FIN ACK
     create_header(FIN_ACK, 0, cur_sequence_num, header);
-    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (const struct sockaddr *)dest_addr, addrlen);
+    sendto(socket_fd, header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
 
     printf("[sender] Finish stage complete!\n");
 }
@@ -350,7 +347,7 @@ void rsend(char* hostname,
     unsigned long long int remaining_bytes = bytesToTransfer;
 
     // send the first packet then we can start observing what's happened and adjust congestion states accordingly.
-    send_packets(file, socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * cwnd);
+    send_packets(file, socket_fd, &server_addr, cur_sequence_num, MAX_PAYLOAD_SIZE * cwnd);
     cur_sequence_num++;
     in_air_packets_number++;
 
@@ -359,26 +356,25 @@ void rsend(char* hostname,
         struct timeval remaining_time;
         struct timeval cur_time;
 
-        int timeout_milli = transfer_milliseconds_from_timeval(timeout);
+        int timeout_milli = transfer_milliseconds_from_timeval(&timeout);
 
         gettimeofday(&cur_time, NULL);
-        int past_milli = time_diff_in_milliseconds(packet_sending_time[first_unACK_sequence_num % PACKET_BUFFER_SIZE], cur_time);
+        int past_milli = time_diff_in_milliseconds(packet_sending_time[first_unACK_sequence_num % PACKET_BUFFER_SIZE], &cur_time);
         
-        remaining_time.sec = (timeout_milli-past_milli) / 1000;
-        remaining_time.usec = ((timeout_milli-past_milli) % 1000) * 1000;
+        remaining_time.tv_sec = (timeout_milli-past_milli) / 1000;
+        remaining_time.tv_usec = ((timeout_milli-past_milli) % 1000) * 1000;
         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &remaining_time, sizeof(remaining_time));  // update timeout for next recvfrom()
         
         // state transtions based on the next ACK received
-        if (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (const struct sockaddr*)dest_addr, addrlen) == -1) {
+        if (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&server_addr, &addrlen) == -1) {
             // timeout event: reset and enter Slow Start
             slow_start_threshold = cwnd / 2; // could be zero
             cwnd = 1;
             dup_ACK_num = 0;
-            int success_packets_counter = 0;
 
             cur_sequence_num = first_unACK_sequence_num; // resend packets from the first missing ACK
 
-            retransmit(socket_fd, sockaddr_in, cur_sequence_num); // retransmit since the last one is lost
+            retransmit(socket_fd, &server_addr, cur_sequence_num); // retransmit since the last one is lost
 
             next_stage = SLOW_START;
 
@@ -403,25 +399,25 @@ void rsend(char* hostname,
 
                 if (next_stage == SLOW_START) {
                     cwnd++; // cwnd +1 each time receive an ACK
-                    dupACK = 0;
+                    dup_ACK_num = 0;
 
                     // keep as slow start until reach threshold
                     if (cwnd >= slow_start_threshold) {
-                        next_stage == CONGESTION_AVOIDANCE;
+                        next_stage = CONGESTION_AVOIDANCE;
                     }
                 } else if (next_stage == CONGESTION_AVOIDANCE) {
                     success_packets_counter++;
-                    if(packets_counter >= cwnd) {
+                    if(success_packets_counter >= cwnd) {
                         cwnd++; // cwnd +1 only when the previous window packets are all success
                         success_packets_counter = 0; // reset for next round
                     }
-                    dupACK = 0;
+                    dup_ACK_num = 0;
                     // stay in congestion avoidance unless a packet loss (both timeout and dup ACK)
                 } else if (next_stage == FAST_RECOVERY) {
                     cwnd = slow_start_threshold > 1 ? slow_start_threshold : 1; // cwnd need to be at least 1, slow_start_threshold can be reduced to 0 
-                    dupACK = 0;
+                    dup_ACK_num = 0;
 
-                    next_stage == CONGESTION_AVOIDANCE;
+                    next_stage = CONGESTION_AVOIDANCE;
                 }
             } else if (ack_sequence_num < first_unACK_sequence_num) {
                 // got a duplicate ACK
@@ -434,7 +430,7 @@ void rsend(char* hostname,
                     cwnd = slow_start_threshold > 1 ? slow_start_threshold : 1;
                     dup_ACK_num = 0;
 
-                    retransmit(socket_fd,sockaddr_in, first_unACK_sequence_num, cur_sequence_num);
+                    retransmit(socket_fd, &server_addr, first_unACK_sequence_num);
 
                     next_stage = FAST_RECOVERY;
                 }
@@ -445,12 +441,12 @@ void rsend(char* hostname,
         if (in_air_packets_number < cwnd && remaining_bytes > 0) {
             // try sending packets
             if (remaining_bytes > MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number)) {
-                (file, socket_fd, sockaddr_in, cur_sequence_num, MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number));
+                send_packets(file, socket_fd, &server_addr, cur_sequence_num, MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number));
                 cur_sequence_num += (cwnd - in_air_packets_number);
                 in_air_packets_number += (cwnd - in_air_packets_number);
                 remaining_bytes -= MAX_PAYLOAD_SIZE * (cwnd - in_air_packets_number);
             } else {
-                send_packets(file, socket_fd, sockaddr_in, cur_sequence_num, remaining_bytes);
+                send_packets(file, socket_fd, &server_addr, cur_sequence_num, remaining_bytes);
                 int num_packets_send = remaining_bytes / MAX_PAYLOAD_SIZE;
                 if (remaining_bytes % MAX_PAYLOAD_SIZE != 0) {
                     num_packets_send++;
@@ -466,7 +462,7 @@ void rsend(char* hostname,
     printf("[sender] Finish sending data.\n");
 
     // terminate connection
-    finish(socket_fd, server_addr);
+    finish(socket_fd, &server_addr);
 
     // buffer clean up after finish sending
     free_buffers();
@@ -492,9 +488,9 @@ int main(int argc, char** argv) {
     hostUDPport = (unsigned short int) atoi(argv[2]);
     hostname = argv[1];
     bytesToTransfer = atoll(argv[4]);
-    file_name = argv[3];
+    char* file_name = argv[3];
 
-    rsend(hostname, hostUDPportmb, file_name, bytesToTransfer);
+    rsend(hostname, hostUDPport, file_name, bytesToTransfer);
 
     return (EXIT_SUCCESS);
 }
