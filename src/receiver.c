@@ -118,10 +118,14 @@ void connection(int socket_fd){
     printf("[receiver] Before Getting CON_SYN 0.\n");
 
     // 1. get SYN and confirm info are correct
-    if (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen)<0) {
-        perror("recvfrom fail");
-        exit(1);
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));  // set timeout
+
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen) == -1) {
+        printf("recvfrom fail");
     }
+    
     printf("[receiver] Got CON_SYN 0.\n");
     confirm_conn_stage(receive_buffer, CON_SYN);
 
