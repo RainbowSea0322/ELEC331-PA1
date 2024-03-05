@@ -33,7 +33,7 @@ bool written[PACKET_BUFFER_SIZE];
 
 // other
 struct sockaddr_in src_addr;
-socklen_t addrlen;
+socklen_t addrlen = sizeof(src_addr);
 struct timeval timeout;
 
 void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigned long long int sequence_num, char* result) {
@@ -122,7 +122,7 @@ void connection(int socket_fd){
     timeout.tv_usec = 0;
     setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
-    if (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen) == -1) {
+    while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen) == -1) {
         printf("recvfrom fail");
     }
 
@@ -260,7 +260,7 @@ void rrecv(unsigned short int myUDPport,
     // Create UDP socket
     int socket_fd;
     struct sockaddr_in client_addr;
-    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socket_fd == -1) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
