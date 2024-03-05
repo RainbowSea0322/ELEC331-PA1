@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
@@ -12,6 +13,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <limits.h>
+#include <assert.h>
 
 // Time related
 // from: https://stackoverflow.com/questions/361363/how-to-measure-time-in-milliseconds-using-ansi-c
@@ -21,7 +23,7 @@ int transfer_milliseconds_from_timeval(struct timeval* tval) {
 }
 
 struct timeval* get_cur_time() {
-    struct timeval* time = malloc(sizeof(timeval));
+    struct timeval* time = malloc(sizeof(struct timeval));
     gettimeofday(time, NULL);
     return time;
 }
@@ -31,11 +33,11 @@ int time_diff_in_milliseconds(struct timeval* t_early, struct timeval* t_later) 
 }
 
 // Package size
-#define NUM_STAGE_BYTES 1;  // total of 6 stages
-#define NUM_LENGTH_BYTES 1; // max is 1460
-#define NUM_SQUENCE_BYTES 8; // long long int has 8 bytes length
-#define MY_HEADER_SIZE NUM_STAGE_BYTES + NUM_LENGTH_BYTES + NUM_SQUENCE_BYTES;
-#define MAX_PAYLOAD_SIZE 1460; // same as TCP
+#define NUM_STAGE_BYTES 1  // total of 6 stages
+#define NUM_LENGTH_BYTES 1 // max is 1460
+#define NUM_SEQUENCE_BYTES 8 // long long int has 8 bytes length
+#define MY_HEADER_SIZE NUM_STAGE_BYTES + NUM_LENGTH_BYTES + NUM_SEQUENCE_BYTES
+#define MAX_PAYLOAD_SIZE 1460 // same as TCP
 
 // Handshaking Protocal
 enum CONNECTION_STAGE {CON_SYN, CON_ACK, SEND_SYN, SEND_ACK, FIN, FIN_ACK};
@@ -45,14 +47,14 @@ enum CONGESTION_STAGE {SLOW_START, CONGESTION_AVOIDANCE, FAST_RECOVERY, RECV_ACK
 int cwnd = 1;
 int slow_start_threshold = INT_MAX; // wait for the first failure and set to half of cwnd
 int dup_ACK_num = 0;
-#define DUP_ACK_THRESHOLD 3;
+#define DUP_ACK_THRESHOLD 3
 
 bool finish_sending = false; // indicate start of finish stage
 unsigned long long int last_sequence_num = -1;
 bool get_all_ACKs = false;
 
 // retransmission
-#define PACKET_BUFFER_SIZE 100; // TBD
+#define PACKET_BUFFER_SIZE 100 // TBD
 char* packet_buffer[PACKET_BUFFER_SIZE];
 struct timeval* packet_sending_time[PACKET_BUFFER_SIZE];  // 1 to 1 match with packet_buffer
 struct timeval timeout;
@@ -63,19 +65,24 @@ socklen_t *addrlen;
 // helper functions
 
 void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigned long long int sequence_num, char* result) {
-    for (int i=NUM_STAGE_BYTES; i>0; i--) {
-        result[i] = conn_stage & 0xFF;
-        conn_stage /= 0xFF;
-    }
-    
-    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i>NUM_STAGE_BYTES; i--) {
-        result[i] = payload_length & 0xFF;
-        conn_stage /= 0xFF;
-    }
+    // Assuming NUM_STAGE_BYTES, NUM_LENGTH_BYTES, and NUM_SEQUENCE_BYTES are defined correctly
+    int offset = 0;
 
-    for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SQUENCE_BYTES; i>NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i--) {
-        result[i] = sequence_num & 0xFF;
-        conn_stage /= 0xFF;
+    // Connection Stage
+    for (int i = NUM_STAGE_BYTES - 1; i >= 0; i--) {
+        result[offset + i] = (char)((conn_stage >> (8 * i)) & 0xFF);
+    }
+    offset += NUM_STAGE_BYTES;
+
+    // Payload Length
+    for (int i = NUM_LENGTH_BYTES - 1; i >= 0; i--) {
+        result[offset + i] = (char)((payload_length >> (8 * (NUM_LENGTH_BYTES - 1 - i))) & 0xFF);
+    }
+    offset += NUM_LENGTH_BYTES;
+
+    // Sequence Number
+    for (int i = NUM_SEQUENCE_BYTES - 1; i >= 0; i--) {
+        result[offset + i] = (char)((sequence_num >> (8 * (NUM_SEQUENCE_BYTES - 1 - i))) & 0xFF);
     }
 }
 
@@ -87,9 +94,8 @@ void create_packet(char* header, char* payload, int payload_length, char* result
 void confirm_conn_stage(char* packet, enum CONNECTION_STAGE expected_stage) {
     enum CONNECTION_STAGE packet_stage = -1; // false default value
 
-    for (int i = 0; i<NUM_STAGE_BYTES>; i++) {
-        packet_stage += packet[i];
-        packet_stage *= 0xFF;
+  for (int i = 0; i < NUM_STAGE_BYTES; i++) {
+        packet_stage |= (unsigned char)packet[i] << (8 * (NUM_STAGE_BYTES - 1 - i));
     }
 
     assert(packet_stage == expected_stage);
@@ -109,7 +115,7 @@ int get_payload_length(char* packet) {
 unsigned long long int get_sequence_num(char* packet){
     unsigned long long int sequence_num = 0;
 
-    for (int i = NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i < NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SQUENCE_BYTES; i++) {
+    for (int i = NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i < NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SEQUENCE_BYTES; i++) {
         sequence_num += packet[i];
         sequence_num *= 0xFF;
     }
