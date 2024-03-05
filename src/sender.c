@@ -149,7 +149,7 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
 
     // 1. send conn_syn and measure RTT
     // header tranmission should be pretty fast 1 sec timeout
-    timeout.tv_sec = 1;
+    timeout.tv_sec = 5;
     timeout.tv_usec = 0;
     setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));  // set timeout
 

@@ -105,8 +105,7 @@ void init_buffers() {
     }
 }
 
-// use 3-way handshaking protocals to establish a connecetion TODO
-void connection(int socket_fd) {
+// use 3-way handshaking protocals to establish a connecetion
     printf("[receiver] Enter connection stage.\n");
 
     char conn_ack_header[MY_HEADER_SIZE];
@@ -210,7 +209,7 @@ void recv_data(FILE* file, int socket_fd) {
     }
 }
 
-// 4-way finish TODO
+// 4-way finish
 void finish(int socket_fd) {
     printf("[receiver] Enter finish stage.\n");
 
@@ -251,6 +250,7 @@ void rrecv(unsigned short int myUDPport,
 {
     // Create UDP socket
     int socket_fd;
+    struct sockaddr_in client_addr;
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         perror("Socket creation failed");
@@ -258,11 +258,11 @@ void rrecv(unsigned short int myUDPport,
     }
 
     // Bind socket to given port
-    memset(&src_addr, 0, sizeof(src_addr));
-    src_addr.sin_family = AF_INET;
-    src_addr.sin_addr.s_addr = INADDR_ANY;
-    src_addr.sin_port = htons(myUDPport);
-    if (bind(socket_fd, (struct sockaddr *)&src_addr, sizeof(src_addr)) == -1) {
+    memset(&client_addr, 0, sizeof(client_addr));
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_addr.s_addr = INADDR_ANY;
+    client_addr.sin_port = htons(myUDPport);
+    if (bind(socket_fd, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
         perror("Binding failed");
         exit(EXIT_FAILURE);
     }
