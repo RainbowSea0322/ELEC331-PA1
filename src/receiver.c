@@ -106,6 +106,7 @@ void init_buffers() {
 }
 
 // use 3-way handshaking protocals to establish a connecetion
+void connection(int socket_fd){
     printf("[receiver] Enter connection stage.\n");
 
     char conn_ack_header[MY_HEADER_SIZE];
