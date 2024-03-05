@@ -118,7 +118,10 @@ void connection(int socket_fd){
     printf("[receiver] Before Getting CON_SYN 0.\n");
 
     // 1. get SYN and confirm info are correct
-    recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen);
+    if (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen)<0) {
+        perror("recvfrom fail");
+        exit(1);
+    }
     printf("[receiver] Got CON_SYN 0.\n");
     confirm_conn_stage(receive_buffer, CON_SYN);
 
