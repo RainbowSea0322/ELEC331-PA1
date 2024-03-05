@@ -125,7 +125,7 @@ void connection(int socket_fd){
     while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen) == -1) {
         printf("recvfrom fail");
     }
-    
+
     printf("[receiver] Got CON_SYN 0.\n");
     confirm_conn_stage(receive_buffer, CON_SYN);
 
@@ -266,17 +266,17 @@ void rrecv(unsigned short int myUDPport,
         exit(EXIT_FAILURE);
     }
 
-    // Bind socket to given port
-    memset(&client_addr, 0, sizeof(client_addr));
+    // Fill server information
+    memset((char *) &client_addr, 0, sizeof (si_me));
     client_addr.sin_family = AF_INET;
-    client_addr.sin_addr.s_addr = INADDR_ANY;
     client_addr.sin_port = htons(myUDPport);
+    client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(socket_fd, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
         perror("Binding failed");
         exit(EXIT_FAILURE);
     }
 
-    // wait for connection
+    // establish connection
     connection(socket_fd);
 
     // Open destination file
