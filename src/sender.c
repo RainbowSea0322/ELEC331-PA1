@@ -70,11 +70,13 @@ void create_header(enum CONNECTION_STAGE conn_stage, int payload_length, unsigne
         result[i] = conn_stage & 0xFF;
         conn_stage /= 0xFF;
     }
+    printf("[create header] conn stage is: %d", result[0]);
     
     for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES-1; i>=NUM_STAGE_BYTES; i--) {
         result[i] = payload_length & 0xFF;
         conn_stage /= 0xFF;
     }
+    payload_length("[create header] payload_length is: %d", result[1]");
 
     for (int i=NUM_STAGE_BYTES+NUM_LENGTH_BYTES+NUM_SEQUENCE_BYTES-1; i>=NUM_STAGE_BYTES+NUM_LENGTH_BYTES; i--) {
         result[i] = sequence_num & 0xFF;
