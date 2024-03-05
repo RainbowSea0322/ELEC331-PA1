@@ -115,6 +115,8 @@ void connection(int socket_fd) {
     char receive_buffer[MY_HEADER_SIZE];
     memset(receive_buffer, 0, MY_HEADER_SIZE);
 
+    printf("[receiver] Before Getting CON_SYN 0.\n");
+    
     // 1. get SYN and confirm info are correct
     recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen);
     confirm_conn_stage(receive_buffer, CON_SYN);
@@ -124,13 +126,19 @@ void connection(int socket_fd) {
     assert(syn_sequence_num == 0); // first SYN should have sequence number 0
     assert(syn_payload_length == 0); // SYN should not have any payload
 
+    printf("[receiver] Got CON_SYN 0.\n");
+
     // 2. send CON_ACK
     create_header(CON_ACK, 0, 0, conn_ack_header); // CON_ACK in third way handshake
     sendto(socket_fd, conn_ack_header, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, addrlen);
 
+    printf("[receiver] Sent CON_ACK 0.\n");
+
     // 3. get CON_ACK and confirm info are correct
     recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)&src_addr, &addrlen);
     confirm_conn_stage(receive_buffer, CON_ACK);
+
+    printf("[receiver] Got CON_ACK 1.\n");
 
     syn_sequence_num  = get_sequence_num(receive_buffer);
     syn_payload_length = get_payload_length(receive_buffer);

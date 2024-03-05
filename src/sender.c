@@ -155,6 +155,9 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
 
     create_header(CON_SYN, 0, cur_sequence_num, conn_syn_header);
     sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
+
+    printf("[sender] Sent CON_SYN 0.\n");
+
     gettimeofday(&tval_before, NULL);
 
     // 2. get ACK and confirm info are correct
@@ -163,6 +166,9 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
         sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
         gettimeofday(&tval_before, NULL);
     }
+
+    printf("[sender] Receive CON_ACK 0.\n");
+
     gettimeofday(&tval_after, NULL);
     timersub(&tval_after, &tval_before, &tval_result);
     int new_RTT = transfer_milliseconds_from_timeval(&tval_result);
@@ -175,10 +181,12 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
     assert(cur_sequence_num == ack_sequence_num); // ACK and SYN should have matching sequence number
     assert(ack_payload_length == 0); // ACK should not have any payload
 
-    // 2. send conn_syn and complete connection stage
+    // 3. send conn_syn and complete connection stage
     cur_sequence_num++;
     create_header(CON_ACK, 0, cur_sequence_num, conn_syn_header); // CON_ACK in third way handshake
     sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
+
+    printf("[sender] Sent CON_ACK 1.\n");
 
     printf("[sender] Connection stage complete!\n");
 }
