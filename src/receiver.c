@@ -116,7 +116,7 @@ void connection(int socket_fd) {
     memset(receive_buffer, 0, MY_HEADER_SIZE);
 
     printf("[receiver] Before Getting CON_SYN 0.\n");
-    
+
     // 1. get SYN and confirm info are correct
     recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr*)&src_addr, &addrlen);
     confirm_conn_stage(receive_buffer, CON_SYN);
@@ -251,7 +251,6 @@ void rrecv(unsigned short int myUDPport,
 {
     // Create UDP socket
     int socket_fd;
-    struct sockaddr_in client_addr;
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         perror("Socket creation failed");
@@ -259,11 +258,11 @@ void rrecv(unsigned short int myUDPport,
     }
 
     // Bind socket to given port
-    memset(&client_addr, 0, sizeof(client_addr));
-    client_addr.sin_family = AF_INET;
-    client_addr.sin_addr.s_addr = INADDR_ANY;
-    client_addr.sin_port = htons(myUDPport);
-    if (bind(socket_fd, (struct sockaddr *)&client_addr, sizeof(client_addr)) == -1) {
+    memset(&src_addr, 0, sizeof(src_addr));
+    src_addr.sin_family = AF_INET;
+    src_addr.sin_addr.s_addr = INADDR_ANY;
+    src_addr.sin_port = htons(myUDPport);
+    if (bind(socket_fd, (struct sockaddr *)&src_addr, sizeof(src_addr)) == -1) {
         perror("Binding failed");
         exit(EXIT_FAILURE);
     }

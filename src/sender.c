@@ -164,6 +164,7 @@ void connection(int socket_fd, struct sockaddr_in *dest_addr) {
     while (recvfrom(socket_fd, receive_buffer, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, &addrlen) == -1) {
         // resend on timeout
         sendto(socket_fd, conn_syn_header, MY_HEADER_SIZE, 0, (struct sockaddr *)dest_addr, addrlen);
+        printf("[sender] Resent CON_SYN 0.\n");
         gettimeofday(&tval_before, NULL);
     }
 
