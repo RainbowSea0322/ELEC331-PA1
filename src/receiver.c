@@ -267,7 +267,7 @@ void rrecv(unsigned short int myUDPport,
     }
 
     // Fill server information
-    memset((char *) &client_addr, 0, sizeof (si_me));
+    memset((char *) &client_addr, 0, sizeof (client_addr));
     client_addr.sin_family = AF_INET;
     client_addr.sin_port = htons(myUDPport);
     client_addr.sin_addr.s_addr = htonl(INADDR_ANY);
